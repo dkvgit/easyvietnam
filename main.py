@@ -161,6 +161,28 @@ async def ai_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
 async def main():
     logger.info("🚀 main() started")
 
+    import threading
+    from http.server import HTTPServer, BaseHTTPRequestHandler
+
+    class HealthHandler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b"OK")
+
+        def log_message(self, format, *args):
+            pass
+
+    def run_health_server():
+        server = HTTPServer(("0.0.0.0", 7860), HealthHandler)
+        server.serve_forever()
+
+    health_thread = threading.Thread(target=run_health_server, daemon=True)
+    health_thread.start()
+    logger.info("✅ Health-сервер на :7860 поднят")
+
+    await asyncio.sleep(1)
+
     request_config = HTTPXRequest(
         connect_timeout=60.0,
         read_timeout=60.0,
@@ -179,21 +201,13 @@ async def main():
 
     try:
         if USE_WEBHOOK and WEBHOOK_URL:
-            logger.info(f"🌐 Режим WEBHOOK. Порт: {WEBHOOK_PORT}")
+            logger.info(f"🌐 Режим WEBHOOK. Порт: 7860")
 
-            # Шаг 1: сразу открываем порт — до любых сетевых запросов к Telegram
-            await application.updater.start_webhook(
-                listen="0.0.0.0",
-                port=int(WEBHOOK_PORT),
-                url_path=WEBHOOK_PATH,
-                secret_token=WEBHOOK_SECRET
-            )
-            logger.info("✅ HTTP-сервер на порту поднят")
-
-            # Шаг 2: теперь можно инициализировать (getMe и прочее)
             await application.initialize()
+            logger.info("✅ initialize() прошёл")
+
             await application.start()
-            logger.info("✅ Application запущен")
+            logger.info("✅ application.start() прошёл")
 
             async def register_webhook_safely():
                 try:
@@ -235,8 +249,6 @@ async def main():
         except Exception as e:
             logger.error(f"❌ Критическая ошибка: {e}")
         await application.shutdown()
-        
-        
         
 
 if __name__ == "__main__":
