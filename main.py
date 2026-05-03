@@ -1,6 +1,10 @@
 import sys
 import asyncio
 
+import telegram
+print(f"PTB VERSION: {telegram.__version__}")
+
+
 if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
@@ -156,15 +160,14 @@ async def ai_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 async def main():
     logger.info("🚀 main() started")
-    
-    # Конфиг с запасом по времени
+
     request_config = HTTPXRequest(
         connect_timeout=60.0,
         read_timeout=60.0,
         write_timeout=60.0,
         pool_timeout=60.0
     )
-    
+
     application = (
         Application.builder()
         .token(FINAL_TOKEN)
@@ -175,60 +178,64 @@ async def main():
     register_handlers(application)
 
     try:
-        # Инициализация внутренних компонентов
-        await application.initialize()
-
         if USE_WEBHOOK and WEBHOOK_URL:
             logger.info(f"🌐 Режим WEBHOOK. Порт: {WEBHOOK_PORT}")
-            
-            # 1. ЗАПУСКАЕМ ТОЛЬКО СЕРВЕР (без передачи параметров webhook_url здесь)
-            # Это откроет порт 7860 мгновенно и без сетевых запросов к Telegram
+
+            # Шаг 1: сразу открываем порт — до любых сетевых запросов к Telegram
             await application.updater.start_webhook(
                 listen="0.0.0.0",
                 port=int(WEBHOOK_PORT),
                 url_path=WEBHOOK_PATH,
                 secret_token=WEBHOOK_SECRET
             )
+            logger.info("✅ HTTP-сервер на порту поднят")
 
-            # 2. Запускаем само приложение
+            # Шаг 2: теперь можно инициализировать (getMe и прочее)
+            await application.initialize()
             await application.start()
+            logger.info("✅ Application запущен")
 
-            # 3. ФОНОВАЯ РЕГИСТРАЦИЯ (теперь она не уронит main)
             async def register_webhook_safely():
                 try:
-                    await asyncio.sleep(5)  # Даем системе время окончательно проснуться
-                    logger.info("📡 Отправка запроса set_webhook в Telegram...")
+                    await asyncio.sleep(3)
+                    logger.info("📡 Регистрируем webhook в Telegram...")
                     await application.bot.set_webhook(
                         url=f"{WEBHOOK_URL}{WEBHOOK_PATH}",
                         secret_token=WEBHOOK_SECRET,
                         allowed_updates=Update.ALL_TYPES,
                         drop_pending_updates=True,
-                        api_kwargs={'timeout': 50}
+                        api_kwargs={"timeout": 50}
                     )
-                    logger.info("✅ Webhook успешно зарегистрирован!")
+                    logger.info("✅ Webhook зарегистрирован!")
                 except Exception as e:
-                    logger.error(f"⚠️ Ошибка регистрации вебхука (но сервер живет): {e}")
+                    logger.error(f"⚠️ Ошибка регистрации webhook: {e}")
 
             asyncio.create_task(register_webhook_safely())
             asyncio.create_task(set_bot_commands(application))
-            
-            logger.info("✅ Локальный сервер запущен. Ожидаем подтверждения от TG в фоне.")
+
+            logger.info("✅ Сервер живёт, ждём обновлений")
+
         else:
             logger.info("💻 Режим POLLING")
+            await application.initialize()
             await set_bot_commands(application)
             await application.start()
             await application.updater.start_polling(allowed_updates=Update.ALL_TYPES)
 
-        # Бесконечный цикл, который не прервется из-за таймаута вебхука
         await asyncio.Event().wait()
 
     except Exception as e:
-        logger.error(f"❌ Критическая ошибка в main(): {e}")
+        logger.error(f"❌ Ошибка в main(): {e}")
         raise e
     finally:
-        if application.running:
-            await application.stop()
+        try:
+            if application.running:
+                await application.updater.stop()
+                await application.stop()
+        except Exception as e:
+            logger.error(f"❌ Критическая ошибка: {e}")
         await application.shutdown()
+        
         
         
 
