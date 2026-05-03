@@ -1,0 +1,4 @@
+*.exe
+chromedriver
+__pycache__/
+*.pyc
