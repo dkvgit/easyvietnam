@@ -157,8 +157,13 @@ async def ai_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
 async def main():
     logger.info("🚀 main() started")
     
-    # 1. Настройка таймаутов (уже 30 секунд — это хорошо)
-    request_config = HTTPXRequest(connect_timeout=30, read_timeout=30)
+    # Увеличиваем таймауты до максимума (60 секунд)
+    request_config = HTTPXRequest(
+        connect_timeout=60.0,
+        read_timeout=60.0,
+        write_timeout=60.0,
+        pool_timeout=60.0
+    )
     
     application = (
         Application.builder()
@@ -167,19 +172,15 @@ async def main():
         .build()
     )
 
-    # 2. Регистрируем хендлеры
     register_handlers(application)
 
     try:
-        # Инициализируем базу данных или другие ресурсы, если нужно
         await application.initialize()
 
         if USE_WEBHOOK and WEBHOOK_URL:
             logger.info(f"🌐 Режим WEBHOOK. Порт: {WEBHOOK_PORT}")
-            logger.info(f"🔗 URL: {WEBHOOK_URL}")
-
-            # 3. ЗАПУСКАЕМ СЕРВЕР СРАЗУ
-            # Это откроет порт 7860 и скажет Hugging Face, что мы живы
+            
+            # Сначала запускаем локальный сервер, чтобы порт 7860 открылся для HF
             await application.updater.start_webhook(
                 listen="0.0.0.0",
                 port=WEBHOOK_PORT,
@@ -189,40 +190,35 @@ async def main():
                 allowed_updates=Update.ALL_TYPES
             )
 
-            # 4. После открытия порта ставим вебхук в самом Telegram
-            await application.bot.set_webhook(
-                url=f"{WEBHOOK_URL}{WEBHOOK_PATH}",
-                secret_token=WEBHOOK_SECRET,
-                allowed_updates=Update.ALL_TYPES,
-                drop_pending_updates=True
-            )
+            # Оборачиваем установку вебхука, чтобы ошибка сети не убила всё приложение
+            try:
+                await application.bot.set_webhook(
+                    url=f"{WEBHOOK_URL}{WEBHOOK_PATH}",
+                    secret_token=WEBHOOK_SECRET,
+                    allowed_updates=Update.ALL_TYPES,
+                    drop_pending_updates=True,
+                    api_kwargs={'timeout': 50} # Таймаут на стороне API Telegram
+                )
+                logger.info("✅ Webhook подтвержден в Telegram")
+            except Exception as e:
+                logger.warning(f"⚠️ Telegram долго отвечал на set_webhook, но мы продолжаем: {e}")
             
             await application.start()
-            
-            # Ставим команды в фоне, чтобы не тормозить запуск
             asyncio.create_task(set_bot_commands(application))
-            
-            logger.info("✅ Webhook полностью готов")
+            logger.info("✅ Приложение полностью готово")
         else:
             logger.info("💻 Режим POLLING")
             await set_bot_commands(application)
             await application.start()
             await application.updater.start_polling(allowed_updates=Update.ALL_TYPES)
-            logger.info("✅ Polling запущен...")
 
-        # 5. Бесконечное ожидание
         await asyncio.Event().wait()
 
     except Exception as e:
-        logger.error(f"❌ Ошибка в main(): {e}")
+        logger.error(f"❌ Критическая ошибка в main(): {e}")
         raise e
     finally:
-        # Безопасная остановка без лишнего шума
-        try:
-            if application.updater and application.updater.running:
-                await application.updater.stop()
-            if application.running:
-                await application.stop()
-            await application.shutdown()
-        except Exception as stop_e:
-            logger.error(f"Ошибка при закрытии: {stop_e}")
+        # Корректное завершение работы
+        if application.running:
+            await application.stop()
+        await application.shutdown()
