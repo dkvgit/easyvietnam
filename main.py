@@ -157,7 +157,7 @@ async def ai_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
 async def main():
     logger.info("🚀 main() started")
     
-    # Увеличиваем таймауты до максимума (60 секунд)
+    # Увеличиваем таймауты до максимума
     request_config = HTTPXRequest(
         connect_timeout=60.0,
         read_timeout=60.0,
@@ -180,7 +180,8 @@ async def main():
         if USE_WEBHOOK and WEBHOOK_URL:
             logger.info(f"🌐 Режим WEBHOOK. Порт: {WEBHOOK_PORT}")
             
-            # Сначала запускаем локальный сервер, чтобы порт 7860 открылся для HF
+            # 1. СНАЧАЛА запускаем веб-сервер.
+            # Это откроет порт 7860 и HF поймет, что приложение живо.
             await application.updater.start_webhook(
                 listen="0.0.0.0",
                 port=WEBHOOK_PORT,
@@ -190,18 +191,19 @@ async def main():
                 allowed_updates=Update.ALL_TYPES
             )
 
-            # Оборачиваем установку вебхука, чтобы ошибка сети не убила всё приложение
+            # 2. А теперь пробуем поставить вебхук, но НЕ даем ему убить программу
             try:
+                logger.info("📡 Попытка регистрации вебхука в Telegram...")
                 await application.bot.set_webhook(
                     url=f"{WEBHOOK_URL}{WEBHOOK_PATH}",
                     secret_token=WEBHOOK_SECRET,
                     allowed_updates=Update.ALL_TYPES,
                     drop_pending_updates=True,
-                    api_kwargs={'timeout': 50} # Таймаут на стороне API Telegram
+                    api_kwargs={'timeout': 50}  # Заставляем саму библиотеку ждать дольше
                 )
                 logger.info("✅ Webhook подтвержден в Telegram")
-            except Exception as e:
-                logger.warning(f"⚠️ Telegram долго отвечал на set_webhook, но мы продолжаем: {e}")
+            except Exception as web_e:
+                logger.warning(f"⚠️ Telegram не ответил вовремя, но сервер работает: {web_e}")
             
             await application.start()
             asyncio.create_task(set_bot_commands(application))
@@ -218,7 +220,9 @@ async def main():
         logger.error(f"❌ Критическая ошибка в main(): {e}")
         raise e
     finally:
-        # Корректное завершение работы
         if application.running:
             await application.stop()
         await application.shutdown()
+
+if __name__ == "__main__":
+    asyncio.run(main())
