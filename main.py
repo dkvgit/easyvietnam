@@ -157,7 +157,7 @@ async def ai_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
 async def main():
     logger.info("🚀 main() started")
     
-    # Максимальные таймауты для сетевых запросов
+    # Конфиг с запасом по времени
     request_config = HTTPXRequest(
         connect_timeout=60.0,
         read_timeout=60.0,
@@ -175,31 +175,29 @@ async def main():
     register_handlers(application)
 
     try:
-        # 1. Инициализация без сетевых запросов к TG
+        # Инициализация внутренних компонентов
         await application.initialize()
 
         if USE_WEBHOOK and WEBHOOK_URL:
             logger.info(f"🌐 Режим WEBHOOK. Порт: {WEBHOOK_PORT}")
             
-            # 2. ЗАПУСКАЕМ ВЕБ-СЕРВЕР ПЕРВЫМ
-            # Это мгновенно открывает порт 7860, и HF видит, что приложение Running
+            # 1. ЗАПУСКАЕМ ТОЛЬКО СЕРВЕР (без передачи параметров webhook_url здесь)
+            # Это откроет порт 7860 мгновенно и без сетевых запросов к Telegram
             await application.updater.start_webhook(
                 listen="0.0.0.0",
                 port=int(WEBHOOK_PORT),
                 url_path=WEBHOOK_PATH,
-                webhook_url=f"{WEBHOOK_URL}{WEBHOOK_PATH}",
-                secret_token=WEBHOOK_SECRET,
-                allowed_updates=Update.ALL_TYPES
+                secret_token=WEBHOOK_SECRET
             )
 
-            # 3. Запускаем приложение
+            # 2. Запускаем само приложение
             await application.start()
 
-            # 4. РЕГИСТРАЦИЯ ВЕБХУКА В ФОНЕ
-            # Мы не ждем ответа от Telegram (await), чтобы не ловить Timed out в основном потоке
-            async def delayed_webhook_setup():
+            # 3. ФОНОВАЯ РЕГИСТРАЦИЯ (теперь она не уронит main)
+            async def register_webhook_safely():
                 try:
-                    await asyncio.sleep(2) # Даем серверу чуть-чуть "продышаться"
+                    await asyncio.sleep(5)  # Даем системе время окончательно проснуться
+                    logger.info("📡 Отправка запроса set_webhook в Telegram...")
                     await application.bot.set_webhook(
                         url=f"{WEBHOOK_URL}{WEBHOOK_PATH}",
                         secret_token=WEBHOOK_SECRET,
@@ -207,21 +205,21 @@ async def main():
                         drop_pending_updates=True,
                         api_kwargs={'timeout': 50}
                     )
-                    logger.info("✅ Webhook подтвержден в Telegram")
-                except Exception as web_e:
-                    logger.error(f"⚠️ Ошибка фоновой регистрации вебхука: {web_e}")
+                    logger.info("✅ Webhook успешно зарегистрирован!")
+                except Exception as e:
+                    logger.error(f"⚠️ Ошибка регистрации вебхука (но сервер живет): {e}")
 
-            asyncio.create_task(delayed_webhook_setup())
+            asyncio.create_task(register_webhook_safely())
             asyncio.create_task(set_bot_commands(application))
             
-            logger.info("✅ Приложение запущено, ожидаем входящие запросы")
+            logger.info("✅ Локальный сервер запущен. Ожидаем подтверждения от TG в фоне.")
         else:
             logger.info("💻 Режим POLLING")
             await set_bot_commands(application)
             await application.start()
             await application.updater.start_polling(allowed_updates=Update.ALL_TYPES)
 
-        # Держим приложение живым
+        # Бесконечный цикл, который не прервется из-за таймаута вебхука
         await asyncio.Event().wait()
 
     except Exception as e:
@@ -231,6 +229,8 @@ async def main():
         if application.running:
             await application.stop()
         await application.shutdown()
+        
+        
 
 if __name__ == "__main__":
     asyncio.run(main())
