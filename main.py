@@ -157,7 +157,7 @@ async def ai_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
 async def main():
     logger.info("🚀 main() started")
     
-    # Увеличиваем таймауты до максимума
+    # Максимальные таймауты для сетевых запросов
     request_config = HTTPXRequest(
         connect_timeout=60.0,
         read_timeout=60.0,
@@ -175,45 +175,53 @@ async def main():
     register_handlers(application)
 
     try:
+        # 1. Инициализация без сетевых запросов к TG
         await application.initialize()
 
         if USE_WEBHOOK and WEBHOOK_URL:
             logger.info(f"🌐 Режим WEBHOOK. Порт: {WEBHOOK_PORT}")
             
-            # 1. СНАЧАЛА запускаем веб-сервер.
-            # Это откроет порт 7860 и HF поймет, что приложение живо.
+            # 2. ЗАПУСКАЕМ ВЕБ-СЕРВЕР ПЕРВЫМ
+            # Это мгновенно открывает порт 7860, и HF видит, что приложение Running
             await application.updater.start_webhook(
                 listen="0.0.0.0",
-                port=WEBHOOK_PORT,
+                port=int(WEBHOOK_PORT),
                 url_path=WEBHOOK_PATH,
                 webhook_url=f"{WEBHOOK_URL}{WEBHOOK_PATH}",
                 secret_token=WEBHOOK_SECRET,
                 allowed_updates=Update.ALL_TYPES
             )
 
-            # 2. А теперь пробуем поставить вебхук, но НЕ даем ему убить программу
-            try:
-                logger.info("📡 Попытка регистрации вебхука в Telegram...")
-                await application.bot.set_webhook(
-                    url=f"{WEBHOOK_URL}{WEBHOOK_PATH}",
-                    secret_token=WEBHOOK_SECRET,
-                    allowed_updates=Update.ALL_TYPES,
-                    drop_pending_updates=True,
-                    api_kwargs={'timeout': 50}  # Заставляем саму библиотеку ждать дольше
-                )
-                logger.info("✅ Webhook подтвержден в Telegram")
-            except Exception as web_e:
-                logger.warning(f"⚠️ Telegram не ответил вовремя, но сервер работает: {web_e}")
-            
+            # 3. Запускаем приложение
             await application.start()
+
+            # 4. РЕГИСТРАЦИЯ ВЕБХУКА В ФОНЕ
+            # Мы не ждем ответа от Telegram (await), чтобы не ловить Timed out в основном потоке
+            async def delayed_webhook_setup():
+                try:
+                    await asyncio.sleep(2) # Даем серверу чуть-чуть "продышаться"
+                    await application.bot.set_webhook(
+                        url=f"{WEBHOOK_URL}{WEBHOOK_PATH}",
+                        secret_token=WEBHOOK_SECRET,
+                        allowed_updates=Update.ALL_TYPES,
+                        drop_pending_updates=True,
+                        api_kwargs={'timeout': 50}
+                    )
+                    logger.info("✅ Webhook подтвержден в Telegram")
+                except Exception as web_e:
+                    logger.error(f"⚠️ Ошибка фоновой регистрации вебхука: {web_e}")
+
+            asyncio.create_task(delayed_webhook_setup())
             asyncio.create_task(set_bot_commands(application))
-            logger.info("✅ Приложение полностью готово")
+            
+            logger.info("✅ Приложение запущено, ожидаем входящие запросы")
         else:
             logger.info("💻 Режим POLLING")
             await set_bot_commands(application)
             await application.start()
             await application.updater.start_polling(allowed_updates=Update.ALL_TYPES)
 
+        # Держим приложение живым
         await asyncio.Event().wait()
 
     except Exception as e:
