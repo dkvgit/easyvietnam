@@ -22,7 +22,7 @@ from config import BOT_TOKEN, LOG_LEVEL, USE_WEBHOOK, WEBHOOK_URL, WEBHOOK_PORT,
 print("✅ config загружен")
 
 from handlers import start_handler, category_handler, admin_handler
-print("✅ handlers загружены")
+print("✅ handlers загруженыы")
 
 from handlers.slider_handler import handle_slider_callback
 print("✅ slider_handler загружен")
