@@ -203,7 +203,7 @@ async def main():
         if USE_WEBHOOK and WEBHOOK_URL:
             logger.info(f"🌐 Режим WEBHOOK. Порт: 7860")
 
-            await application.initialize()
+            await asyncio.wait_for(application.initialize(), timeout=30)
             logger.info("✅ initialize() прошёл")
 
             await application.start()
