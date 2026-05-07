@@ -2,11 +2,12 @@ name: Keep Alive
 
 on:
   schedule:
-    - cron: '*/10 * * * *'   # ← было */14, стало каждые 10 минут
+    - cron: '*/10 * * * *'
   workflow_dispatch:
 
 jobs:
   ping:
     runs-on: ubuntu-latest
     steps:
-      - run: curl https://easyvietnam-c7b6.onrender.com
+      - name: Ping Render
+        run: curl -s -o /dev/null -w "%{http_code}\n" https://easyvietnam-c7b6.onrender.com
