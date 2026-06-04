@@ -160,55 +160,68 @@ async def ai_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 async def main():
     logger.info("🚀 main() started")
-
+    
+    # Health-сервер
     import threading
     from http.server import HTTPServer, BaseHTTPRequestHandler
-
+    
     class HealthHandler(BaseHTTPRequestHandler):
         def do_GET(self):
             self.send_response(200)
             self.end_headers()
             self.wfile.write(b"OK")
-
         def log_message(self, format, *args):
             pass
-
+    
     def run_health_server():
         server = HTTPServer(("0.0.0.0", 7860), HealthHandler)
         server.serve_forever()
-
+    
     health_thread = threading.Thread(target=run_health_server, daemon=True)
     health_thread.start()
     logger.info("✅ Health-сервер на :7860 поднят")
-
+    
     await asyncio.sleep(1)
-
+    
+    # Конфигурация с таймаутами
     request_config = HTTPXRequest(
         connect_timeout=60.0,
         read_timeout=60.0,
         write_timeout=60.0,
         pool_timeout=60.0
     )
-
-    application = (
-        Application.builder()
-        .token(FINAL_TOKEN)
-        .request(request_config)
-        .build()
-    )
-
+    
+    application = Application.builder().token(FINAL_TOKEN).request(request_config).build()
     register_handlers(application)
-
+    
+    # ========== НАЧАЛО КЛЮЧЕВЫХ ИСПРАВЛЕНИЙ ==========
+    
+    # Инициализируем приложение
+    await application.initialize()
+    logger.info("✅ Application initialized")
+    
+    # ВАЖНО: Сначала удаляем webhook
+    try:
+        deleted = await application.bot.delete_webhook(drop_pending_updates=True)
+        logger.info(f"✅ Webhook удалён: {deleted}")
+        await asyncio.sleep(1)  # Даем время Telegram обработать
+    except Exception as e:
+        logger.error(f"⚠️ Ошибка при удалении webhook: {e}")
+    
+    # Запускаем приложение
+    await application.start()
+    logger.info("✅ Application started")
+    
+    # Устанавливаем команды
+    await set_bot_commands(application)
+    logger.info("✅ Commands set")
+    
+    # ========== КОНЕЦ КЛЮЧЕВЫХ ИСПРАВЛЕНИЙ ==========
+    
     try:
         if USE_WEBHOOK and WEBHOOK_URL:
-            logger.info(f"🌐 Режим WEBHOOK. Порт: 7860")
-
-            await asyncio.wait_for(application.initialize(), timeout=30)
-            logger.info("✅ initialize() прошёл")
-
-            await application.start()
-            logger.info("✅ application.start() прошёл")
-
+            logger.info("🌐 Режим WEBHOOK")
+            
             async def register_webhook_safely():
                 try:
                     await asyncio.sleep(3)
@@ -223,33 +236,32 @@ async def main():
                     logger.info("✅ Webhook зарегистрирован!")
                 except Exception as e:
                     logger.error(f"⚠️ Ошибка регистрации webhook: {e}")
-
+            
             asyncio.create_task(register_webhook_safely())
-            asyncio.create_task(set_bot_commands(application))
-
-            logger.info("✅ Сервер живёт, ждём обновлений")
-
+            logger.info("✅ Webhook режим запущен")
         else:
             logger.info("💻 Режим POLLING")
-            await application.initialize()
-            await set_bot_commands(application)
-            await application.start()
-            await application.updater.start_polling(allowed_updates=Update.ALL_TYPES)
-
+            await application.updater.start_polling(
+                allowed_updates=Update.ALL_TYPES,
+                drop_pending_updates=True
+            )
+            logger.info("✅ Polling started")
+        
+        # Бесконечное ожидание
         await asyncio.Event().wait()
-
+        
     except Exception as e:
         logger.error(f"❌ Ошибка в main(): {e}")
         raise e
     finally:
         try:
-            if application.running:
+            if hasattr(application, 'updater') and application.updater.running:
                 await application.updater.stop()
+            if application.running:
                 await application.stop()
+            await application.shutdown()
         except Exception as e:
-            logger.error(f"❌ Критическая ошибка: {e}")
-        await application.shutdown()
-        
+            logger.error(f"❌ Ошибка при остановке: {e}")
 
 if __name__ == "__main__":
     asyncio.run(main())
